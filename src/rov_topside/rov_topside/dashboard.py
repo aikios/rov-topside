@@ -13,11 +13,13 @@ Run alongside the other topside/onboard nodes.
 import tkinter as tk
 from tkinter import ttk
 import threading
+import io
+from PIL import Image, ImageTk
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from sensor_msgs.msg import Joy, BatteryState
+from sensor_msgs.msg import Joy, BatteryState, CompressedImage
 from std_msgs.msg import Float64, Bool, String
 from mavros_msgs.msg import State, OverrideRCIn, RCOut, VfrHud
 
@@ -71,6 +73,9 @@ class DashboardNode(Node):
         self.create_subscription(String, '/rov/pid_status', self.pid_status_cb, 10)
         self.create_subscription(Bool, '/rov/fc_heartbeat', self.heartbeat_cb, 10)
 
+        # Camera preview
+        self.create_subscription(CompressedImage, '/photogrammetry/preview', self.preview_cb, 1)
+
         # Auto-tune trigger publisher
         self.autotune_pub = self.create_publisher(Bool, '/rov/autotune_trigger', 10)
 
@@ -92,6 +97,8 @@ class DashboardNode(Node):
         self.fc_heartbeat = False
         self.hb_blink_state = False
         self.hb_blink_counter = 0
+        self.preview_jpeg = None
+        self.preview_updated = False
         self.servo_updated = False
 
         self.get_logger().info('Dashboard node started')
@@ -137,6 +144,10 @@ class DashboardNode(Node):
     def heartbeat_cb(self, msg):
         self.fc_heartbeat = msg.data
 
+    def preview_cb(self, msg):
+        self.preview_jpeg = bytes(msg.data)
+        self.preview_updated = True
+
 
 class Dashboard:
     def __init__(self, node):
@@ -144,7 +155,7 @@ class Dashboard:
         self.root = tk.Tk()
         self.root.title('ROV Topside Dashboard')
         self.root.configure(bg='#1a1a2e')
-        self.root.geometry('1100x700')
+        self.root.geometry('1100x950')
 
         style = ttk.Style()
         style.theme_use('clam')
@@ -162,7 +173,8 @@ class Dashboard:
         self.root.columnconfigure(0, weight=1)
         self.root.columnconfigure(1, weight=1)
         self.root.columnconfigure(2, weight=1)
-        self.root.rowconfigure(1, weight=1)
+        self.root.rowconfigure(1, weight=3)
+        self.root.rowconfigure(2, weight=2)  # camera preview row
 
         # === Status Bar (top) ===
         status_frame = tk.Frame(self.root, bg=accent, padx=10, pady=8)
@@ -275,6 +287,18 @@ class Dashboard:
             font=('monospace', 9, 'bold'), padx=10, pady=3,
             command=self._trigger_autotune)
         self.autotune_btn.pack(pady=5)
+
+        # === Row 2: Camera Preview ===
+        cam_frame = tk.LabelFrame(self.root, text=' Camera Preview ', fg='#e94560',
+                                  bg=bg, font=('monospace', 11, 'bold'), padx=5, pady=5)
+        cam_frame.grid(row=2, column=0, columnspan=3, sticky='nsew', padx=5, pady=5)
+
+        self.cam_canvas = tk.Canvas(cam_frame, bg='#000', highlightthickness=0)
+        self.cam_canvas.pack(fill='both', expand=True)
+        self.cam_label = tk.Label(cam_frame, text='Waiting for camera...', fg='#888',
+                                  bg=bg, font=('monospace', 9))
+        self.cam_label.pack()
+        self._cam_photo = None  # keep reference to prevent GC
 
     def _draw_axis_bar(self, canvas, value):
         """Draw a centered bar for -1.0..1.0 axis value."""
@@ -429,6 +453,26 @@ class Dashboard:
             self.dh_status_lbl.config(text='MANUAL', fg='#888')
             self.dh_depth_lbl.config(text=f'Depth: {n.depth:.2f}m')
         self.dh_pid_lbl.config(text=n.pid_status, fg='#aaa')
+
+        # Camera preview
+        if n.preview_updated and n.preview_jpeg:
+            try:
+                img = Image.open(io.BytesIO(n.preview_jpeg))
+                # Fit to canvas size
+                cw = self.cam_canvas.winfo_width()
+                ch = self.cam_canvas.winfo_height()
+                if cw > 10 and ch > 10:
+                    img.thumbnail((cw, ch), Image.LANCZOS)
+                self._cam_photo = ImageTk.PhotoImage(img)
+                self.cam_canvas.delete('all')
+                self.cam_canvas.create_image(
+                    cw // 2, ch // 2, anchor='center', image=self._cam_photo)
+                self.cam_label.config(text='LIVE', fg='#4ecca3')
+                n.preview_updated = False
+            except Exception:
+                pass
+        elif not n.preview_jpeg:
+            self.cam_label.config(text='Waiting for camera...', fg='#888')
 
     def run(self):
         self.root.mainloop()

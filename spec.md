@@ -1,196 +1,132 @@
 # Underwater ROV — System Specification
 
 ## Overview
-An underwater remotely operated vehicle (ROV) controlled from a topside pilot station over a tethered network link. The system uses ROS2 for communication between onboard and topside computers, ArduPilot for low-level thruster/servo control, and a dedicated photogrammetry camera system.
+An underwater remotely operated vehicle (ROV) controlled from a topside pilot station over a tethered network link. Uses ROS2 Jazzy for inter-machine communication, ArduSub on a Pixhawk1 for flight control, and a dedicated Pi Zero photogrammetry camera.
 
 ## Architecture
 
-### Topside / Pilot Computer
-- **Machine:** Ubuntu 24.04 desktop (this computer)
-- **Role:** Pilot interface, joystick input, video display, ROS2 master comms
-- **Controller:** DualShock 4 (connected via USB/Bluetooth)
-- **Software:**
-  - ROS2 Jazzy
-  - `joy` node — reads DualShock 4 inputs, publishes to `/joy`
-  - Pilot control node — maps joystick axes/buttons to ROV commands
-  - Video display node — renders pilot camera feeds
-  - MAVProxy/QGroundControl (optional, for ArduPilot monitoring)
-- **Network:** Ethernet tether to onboard Pi 5
-
-### Onboard Computer — Raspberry Pi 5
-- **IP:** 192.168.1.70
-- **Hostname:** Hydromeda
-- **User:** hydromeda
-- **OS:** Ubuntu (aarch64)
-- **Role:** Main onboard computer, ROS2 node host, MAVLink bridge
-- **Software:**
-  - ROS2 Jazzy
-  - MAVROS — bridges ROS2 commands to ArduPilot FC over serial/USB
-  - USB camera drivers (2x pilot-view cameras)
-  - Network relay to Pi Zero for photogrammetry triggers
-- **Connections:**
-  - ArduPilot flight controller (USB or serial)
-  - 2x USB cameras (pilot view — forward and downward)
-  - Pi Zero 2 W (USB data link)
-  - Ethernet tether to topside
-
-### Photogrammetry Camera — Raspberry Pi Zero 2 W
-- **IP:** 192.168.1.71
-- **User:** hydromini
-- **OS:** Raspberry Pi OS
-- **Role:** High-res still capture for photogrammetry
-- **Hardware:** Camera Module 3 (IMX708) via ribbon cable
-- **Software:**
-  - HTTP capture server (libcamera-based)
-  - Triggered by Pi 5 over USB data link
-- **Notes:** Not running ROS — lightweight HTTP trigger interface only
-
-### Flight Controller — ArduPilot
-- **Board:** Pixhawk1 (STM32F42x, fmuv3-capable, 2MB flash)
-- **USB ID:** `1209:5741 Generic Pixhawk1`
-- **Firmware:** ArduSub stable (flashed via `uploader.py` from Pi 5)
-- **Connection:** USB to Pi 5 → `/dev/ttyACM0` @ 115200 baud
-- **Interface:** MAVLink protocol over USB to Pi 5
-- **ROS2 bridge:** MAVROS on Pi 5 translates ROS2 topics to MAVLink commands
-- **Flash tool:** `~/ardupilot_fw/uploader.py` + `ardusub.apj` on Pi 5
-
-## Data Flow
-
 ```
 DualShock 4
-    │ USB/BT
+    │ USB (evdev)
     ▼
-┌──────────────────────┐       Ethernet Tether       ┌──────────────────────┐
-│   Topside Computer   │◄──────────────────────────►  │   Pi 5 (Onboard)     │
-│                      │    ROS2 DDS (auto-discovery) │                      │
-│  joy_node            │                              │  mavros_node         │
-│  pilot_control_node  │                              │  camera_driver (x2)  │
-│  video_display_node  │                              │  photogrammetry_trig │
-└──────────────────────┘                              └─────┬────────┬───────┘
-                                                            │ USB    │ USB/Serial
-                                                            ▼        ▼
-                                                     ┌──────────┐ ┌──────────────┐
-                                                     │ Pi Zero  │ │  ArduPilot   │
-                                                     │ CM3 Cam  │ │  Flight Ctrl │
-                                                     └──────────┘ └──────────────┘
+┌───────────────────────────┐     Ethernet Tether     ┌────────────────────────────┐
+│   Topside Computer        │◄───────────────────────► │   Pi 5 (Onboard)           │
+│   Ubuntu 24.04            │   Cyclone DDS (unicast)  │   Ubuntu 24.04 (aarch64)   │
+│                           │                          │                            │
+│ joy_publisher (evdev→ROS) │──── /joy ───────────────►│ joy_to_mavlink             │
+│ dashboard (tkinter GUI)   │◄── /mavros/* ────────────│   ├─ MANUAL_CONTROL → FC   │
+│ photogrammetry_saver      │◄── /photogrammetry/* ────│   ├─ arms/disarms FC       │
+│                           │                          │   └─ forwards telem → UDP  │
+│                           │                          │                            │
+│                           │                          │ MAVROS (reads UDP:14550)   │
+│                           │                          │   └─ publishes ROS topics  │
+│                           │                          │                            │
+│                           │                          │ photogrammetry_node        │
+└───────────────────────────┘                          └─────┬────────┬─────────────┘
+                                                             │ USB    │ /dev/ttyACM0
+                                                             ▼        ▼
+                                                      ┌──────────┐ ┌──────────────┐
+                                                      │ Pi Zero  │ │  Pixhawk1    │
+                                                      │ CM3 Cam  │ │  ArduSub     │
+                                                      └──────────┘ └──────────────┘
 ```
 
-## ROS2 Topics (Planned)
+### MAVLink Data Path
+```
+joy_to_mavlink ──MANUAL_CONTROL──► /dev/ttyACM0 (FC serial, pymavlink)
+      │
+      └──raw FC telemetry bytes──► UDP:14550 → MAVROS → ROS2 topics
+```
 
-| Topic | Type | Direction | Description |
-|-------|------|-----------|-------------|
-| `/joy` | `sensor_msgs/Joy` | Topside → Onboard | Raw joystick state |
-| `/cmd_vel` | `geometry_msgs/Twist` | Topside → Onboard | Velocity commands for ROV |
-| `/mavros/rc/override` | `mavros_msgs/OverrideRCIn` | Onboard | RC override to ArduPilot |
-| `/camera/pilot_front/image_raw` | `sensor_msgs/Image` | Onboard → Topside | Forward camera feed |
-| `/camera/pilot_down/image_raw` | `sensor_msgs/Image` | Onboard → Topside | Downward camera feed |
-| `/photogrammetry/trigger` | `std_msgs/Empty` | Onboard | Trigger photogrammetry capture |
-| `/mavros/state` | `mavros_msgs/State` | Onboard → Topside | FC connection/arm status |
-| `/mavros/imu/data` | `sensor_msgs/Imu` | Onboard → Topside | IMU telemetry |
-| `/mavros/battery` | `sensor_msgs/BatteryState` | Onboard → Topside | Battery status |
+**Why not MAVROS for commands?** MAVROS 2.14.0 (ROS2 Jazzy) does not forward ManualControl messages published on its ROS topics to the FC. Verified by publishing 100+ messages to `/mavros/mavros/send` with zero servo output change. Direct serial via pymavlink is the working solution.
+
+### Topside Computer
+- **IP:** 192.168.1.69
+- **Nodes:**
+  - `joy_publisher` — custom evdev-based DS4 reader (replaces `ros2 joy` which has DS4 issues)
+  - `dashboard` — tkinter GUI: joystick, commanded values, servo output, FC state, depth hold, heartbeat
+  - `photogrammetry_saver` — saves photogrammetry images to `~/rov_captures/`
+
+### Onboard — Raspberry Pi 5
+- **IP:** 192.168.1.70 | **User:** hydromeda
+- **Nodes:**
+  - `joy_to_mavlink` — owns FC serial, sends MANUAL_CONTROL, forwards telemetry to MAVROS via UDP
+  - MAVROS — reads FC telemetry from UDP:14550, publishes ROS topics only
+  - `photogrammetry_node` — HTTP-triggers Pi Zero camera, publishes images
+
+### Photogrammetry Camera — Pi Zero 2 W
+- **IP:** 192.168.1.71 (WiFi) / 192.168.7.2 (USB)
+- HTTP capture server on port 8080, Camera Module 3 (IMX708, 4608x2592)
+- Not running ROS — triggered by Pi 5 via HTTP
+
+### Flight Controller — Pixhawk1
+- **Board:** Pixhawk1 fmuv3 (STM32F42x, 2MB flash, 8 MAIN + 6 AUX outputs)
+- **Firmware:** ArduSub 4.5.7 fmuv3
+- **Frame:** FRAME_CONFIG=2 (VECTORED_6DOF, 8 motors)
+- **Connection:** USB → `/dev/ttyACM0` @ 115200 baud
+- **Depth sensor:** Blue Robotics Bar30 on I2C
+- **USB power cycle:** `echo 0/1 > /sys/bus/usb/devices/2-1/authorized`
+- **Flash tool:** `~/ardupilot_fw/uploader.py`
+
+## Control Scheme (DualShock 4)
+
+| Input | Function |
+|-------|----------|
+| Left stick Y | Surge (forward/reverse) |
+| Left stick X | Sway (lateral) |
+| Right stick Y | Heave (rise/sink) |
+| Right stick X | Yaw (rotate) |
+| D-pad left | Toggle depth hold |
+| D-pad up/down | Adjust depth hold setpoint ±0.25m |
+| Options | Arm / Disarm |
+| Triangle | Photogrammetry capture |
 
 ## DDS Configuration (Cyclone DDS)
-- **RMW:** `rmw_cyclonedds_cpp` (set via `RMW_IMPLEMENTATION` env var)
-- **Multicast disabled** — uses explicit unicast peer discovery for Docker compatibility
-- **Topside config:** `cyclonedds_topside.xml` — peers: `192.168.1.70` (Pi 5), `192.168.1.69` (self)
-- **Onboard config:** `cyclonedds_onboard.xml` — peers: `192.168.1.69` (topside), `192.168.1.70` (self)
-- **Env vars required on each machine:**
-  ```
-  RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-  CYCLONEDDS_URI=file:///path/to/cyclonedds.xml
-  ```
-- **Docker note:** Use `network_mode: host` or map the XML peers to container-accessible addresses
+- **RMW:** `rmw_cyclonedds_cpp`
+- **Multicast disabled** — unicast peer discovery for Docker compatibility
+- **Important:** Start joy_publisher BEFORE joy_to_mavlink (DDS discovery order)
+- **Important:** Clear `/dev/shm/cyclonedds_*` between restarts to avoid zombie participants
 
-## Deployment Strategy
-- All ROS2 nodes will be containerized with Docker for reproducible deployment
-- Separate Docker Compose stacks for topside and onboard
-- Shared ROS2 workspace images as base layers
-- Goal: `docker compose up` on each machine to launch the full system
-
-## ROS2 Workspaces
-- **Onboard (Pi 5):** `~/rov_ws/src/rov_cameras/`
-  - `photogrammetry_node` — service `/photogrammetry/capture`, publishes `/photogrammetry/image`
-  - `joy_to_mavlink` — subscribes `/joy`, translates DS4 → 6-DOF PWM channels (logging mode, MAVROS TBD)
-  - Launch: `cameras.launch.py` — photogrammetry node + 2x `usb_cam` for pilot cameras
-- **Topside:** `~/rov_topside_ws/src/rov_topside/`
-  - `photogrammetry_saver` — subscribes `/photogrammetry/image`, saves to `~/rov_captures/`
-  - Launch: `topside.launch.py`
-
-## Repositories
-- **`rov-topside`** — Topside/pilot computer ROS2 workspace, Docker configs
-- **`rov-onboard`** — Pi 5 onboard ROS2 workspace, MAVROS config, Docker configs
+## Depth Hold (PID)
+- Reads depth from `/mavros/vfr_hud` (negative altitude = depth in meters)
+- PID: kp=1.0, ki=0.1, kd=0.5 (tunable via ROS params)
+- D-pad left toggles; captures current depth as setpoint
+- D-pad up/down adjusts ±0.25m per press
+- Output maps to MANUAL_CONTROL `z` axis
 
 ## Quick Start
 
-### 1. Build (one-time, or after code changes)
-
 ```bash
-# Topside
-~/rov_topside_ws/src/rov_topside/scripts/build.sh
+# Full system launch (kills stale processes, starts everything in order)
+bash /tmp/launch_rov.sh
 
-# Onboard (Pi 5)
-ssh hydromeda@192.168.1.70
-~/rov_ws/src/rov_cameras/scripts/build.sh
+# Diagnostics (checks data flow at each step)
+bash /tmp/rov_diag.sh
 ```
 
-### 2. Start onboard (Pi 5) — 2 SSH sessions
+## Repositories
+- **[aikios/rov-topside](https://github.com/aikios/rov-topside)**
+- **[aikios/rov-onboard](https://github.com/aikios/rov-onboard)**
 
-```bash
-# Session 1: cameras + photogrammetry
-~/rov_ws/src/rov_cameras/scripts/start_onboard.sh
-
-# Session 2: joystick translation
-~/rov_ws/src/rov_cameras/scripts/start_joy_translator.sh
-```
-
-### 3. Start topside — 2 terminals
-
-```bash
-# Terminal 1: main nodes (image saver, etc.)
-~/rov_topside_ws/src/rov_topside/scripts/start_topside.sh
-
-# Terminal 2: DualShock 4 joystick
-~/rov_topside_ws/src/rov_topside/scripts/start_joy.sh
-```
-
-### 4. Operate
-
-```bash
-# Trigger a photogrammetry capture (saved to ~/rov_captures/)
-~/rov_topside_ws/src/rov_topside/scripts/capture.sh
-
-# Burst of 5 captures
-~/rov_topside_ws/src/rov_topside/scripts/capture.sh 5
-
-# Move the DS4 sticks — watch joy_to_mavlink logs on Pi 5
-```
-
-## Hardware BOM (To Document)
-- [ ] Raspberry Pi 5
-- [ ] Raspberry Pi Zero 2 W + Camera Module 3
-- [ ] ArduPilot-compatible flight controller
-- [ ] Thrusters (type/count TBD)
-- [ ] Servos (purpose TBD)
-- [ ] 2x USB cameras (pilot view)
-- [ ] Ethernet tether
-- [ ] DualShock 4 controller
-- [ ] Frame / enclosure
-- [ ] Power system (batteries, ESCs, voltage regulators)
+## Known Issues
+- MAVROS 2.14.0 cannot forward ManualControl to FC — using direct serial
+- ArduSub 4.5.7 VECTORED_6DOF mixer broken for forward/lateral — MANUAL_CONTROL works directly
+- DDS zombie participants require full cleanup between restarts
+- Standard `ros2 joy` node unreliable with DS4 — custom evdev publisher required
 
 ## Status
-- [x] Spec created
-- [x] GitHub repos created (aikios/rov-topside, aikios/rov-onboard)
-- [x] ROS2 Jazzy installed on topside
-- [x] ROS2 Jazzy installed on Pi 5
-- [x] Cyclone DDS cross-machine discovery verified
-- [x] Photogrammetry capture via ROS2 (Pi Zero → Pi 5 → topside) verified
-- [ ] Pilot USB cameras via ROS2 (pending physical cameras)
-- [x] Joystick (DS4) → ROS2 → Pi 5 translation node verified (logging mode)
-- [x] ArduSub firmware flashed to Pixhawk1 (fmuv3) via USB from Pi 5
-- [x] MAVROS connected to ArduSub FC over USB
-- [x] ArduSub configured for VECTORED_6DOF (8 thrusters, SERVO1-8 = Motor1-8)
-- [x] joy_to_mavlink publishing RC overrides to MAVROS
-- [ ] Topside visualization (rqt dashboard for controls + servo outputs)
-- [ ] Test RC override → servo output without thrusters connected
-- [ ] Pilot USB cameras via ROS2 (pending physical cameras)
+- [x] ROS2 Jazzy on topside + Pi 5
+- [x] Cyclone DDS unicast cross-machine discovery
+- [x] Photogrammetry pipeline (Pi Zero → Pi 5 → topside)
+- [x] Custom DS4 joystick publisher (evdev)
+- [x] ArduSub 4.5.7, FRAME_CONFIG=2 (VECTORED_6DOF)
+- [x] MANUAL_CONTROL driving motor outputs via direct serial
+- [x] Arm/disarm via Options button
+- [x] Depth sensor (Bar30) + depth hold PID
+- [x] Dashboard with heartbeat, joystick, commands, servo output
+- [x] Deadzone + noise filtering
+- [x] USB power cycle (software, no unplug)
+- [x] Launch + diagnostics scripts
+- [ ] Pilot USB cameras
+- [ ] PID auto-tuner
 - [ ] Docker containerization

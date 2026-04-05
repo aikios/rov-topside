@@ -2,116 +2,76 @@
 
 Pilot station for the underwater ROV. Runs on the topside computer (Ubuntu 24.04, ROS2 Jazzy).
 
+## Nodes
+
+| Node | Description |
+|------|-------------|
+| `joy_publisher` | Custom evdev-based DS4 joystick reader. Publishes `sensor_msgs/Joy` at 20Hz with axes (8) and buttons (13). Replaces `ros2 joy` which has reliability issues with DS4. |
+| `dashboard` | Tkinter GUI showing joystick axes, commanded motor values, FC servo output, FC state (armed/mode), battery, depth, depth hold status, and blinking heartbeat indicator. |
+| `photogrammetry_saver` | Subscribes to `/photogrammetry/image`, saves full-res JPEGs to `~/rov_captures/`. |
+
 ## Prerequisites
 
 ```bash
-# ROS2 Jazzy (should already be installed)
-sudo apt install ros-jazzy-desktop
-
-# Required ROS2 packages
-sudo apt install \
-    ros-jazzy-rmw-cyclonedds-cpp \
-    ros-jazzy-joy \
-    ros-jazzy-joy-linux \
-    ros-jazzy-image-transport \
-    ros-jazzy-compressed-image-transport \
-    ros-jazzy-image-transport-plugins \
-    ros-jazzy-rqt-image-view
-
-# Joystick permissions (log out and back in after)
-sudo usermod -aG input $USER
+sudo apt install ros-jazzy-desktop ros-jazzy-rmw-cyclonedds-cpp \
+    ros-jazzy-image-transport ros-jazzy-compressed-image-transport \
+    ros-jazzy-image-transport-plugins ros-jazzy-rqt-image-view \
+    ros-jazzy-mavros ros-jazzy-mavros-msgs
+sudo pip3 install --break-system-packages evdev
+sudo usermod -aG input $USER  # for joystick access
 ```
 
-## Setup
+## Build
 
 ```bash
-# Build the workspace
 cd ~/rov_topside_ws
 source /opt/ros/jazzy/setup.bash
 colcon build --packages-select rov_topside --symlink-install
-
-# Or use the build script
-./src/rov_topside/scripts/build.sh
 ```
 
 ## DDS Configuration
 
-Cyclone DDS is used with unicast peer discovery (no multicast) for Docker compatibility.
+Cyclone DDS with unicast peers (no multicast, Docker-compatible). Config at `~/cyclonedds_topside.xml`.
 
-The config file at `~/cyclonedds_topside.xml` must exist with the correct peer IPs:
-- Topside: `192.168.1.69`
-- Onboard (Pi 5): `192.168.1.70`
-
-Two environment variables must be set in every terminal:
 ```bash
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file://${HOME}/cyclonedds_topside.xml
 ```
 
-The startup scripts handle this automatically.
-
 ## Running
 
-You need **two terminals** on the topside computer:
-
-### Terminal 1 — Main topside nodes
+### Recommended: use the full launcher script
 ```bash
-./src/rov_topside/scripts/start_topside.sh
+bash /tmp/launch_rov.sh
 ```
 
-This starts:
-- `photogrammetry_saver` — subscribes to `/photogrammetry/image`, saves full-res JPEGs to `~/rov_captures/`
-
-### Terminal 2 — Joystick
+### Manual:
 ```bash
-./src/rov_topside/scripts/start_joy.sh
+# Terminal 1: Joystick
+ros2 run rov_topside joy_publisher
+
+# Terminal 2: Dashboard
+ros2 run rov_topside dashboard
+
+# Terminal 3: Photogrammetry saver
+ros2 run rov_topside photogrammetry_saver
 ```
-
-This starts:
-- `joy_node` — reads DualShock 4 at `/dev/input/js0`, publishes `sensor_msgs/Joy` on `/joy` at 20Hz
-
-### Triggering a photogrammetry capture
-```bash
-# Single capture
-./src/rov_topside/scripts/capture.sh
-
-# Burst of 5
-./src/rov_topside/scripts/capture.sh 5
-```
-
-Images are saved to `~/rov_captures/photogrammetry_YYYYMMDD_HHMMSS_ffffff.jpg`.
-
-## Nodes
-
-| Node | Topic/Service | Type | Description |
-|------|--------------|------|-------------|
-| `photogrammetry_saver` | `/photogrammetry/image` (sub) | `CompressedImage` | Saves incoming photogrammetry images to disk |
-| `joy_node` | `/joy` (pub) | `Joy` | DS4 controller input |
 
 ## DS4 Controller Mapping
 
 | Input | ROV Function |
 |-------|-------------|
-| Left stick X | Yaw (rotate) |
-| Left stick Y | Forward / Reverse |
-| Right stick X | Lateral (strafe) |
-| Right stick Y | Pitch (tilt) |
-| L2 trigger | Descend |
-| R2 trigger | Ascend |
-| L1 / R1 | Lights down / up |
-| Cross (X) | Arm / Disarm toggle |
+| Left stick Y | Surge (forward/reverse) |
+| Left stick X | Sway (lateral) |
+| Right stick Y | Heave (rise/sink) |
+| Right stick X | Yaw (rotate) |
+| D-pad left | Toggle depth hold |
+| D-pad up/down | Depth hold setpoint ±0.25m |
+| Options | Arm / Disarm |
 | Triangle | Photogrammetry capture |
 
-## Debugging
+## Diagnostics
 
 ```bash
-# Check DDS is working (should see topics from both machines)
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export CYCLONEDDS_URI=file://${HOME}/cyclonedds_topside.xml
-source /opt/ros/jazzy/setup.bash
-
-ros2 topic list
-ros2 topic echo /joy --once
-ros2 topic hz /joy
-ros2 service list
+bash /tmp/rov_diag.sh
 ```

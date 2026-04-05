@@ -1,0 +1,27 @@
+services:
+  joy_publisher:
+    build: .
+    network_mode: host
+    privileged: true  # for /dev/input access
+    volumes:
+      - /dev/input:/dev/input
+    command: ros2 run rov_topside joy_publisher
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    network_mode: host
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+    command: ros2 run rov_topside dashboard
+    restart: unless-stopped
+
+  photogrammetry_saver:
+    build: .
+    network_mode: host
+    volumes:
+      - ~/rov_captures:/rov_captures
+    command: ros2 run rov_topside photogrammetry_saver --ros-args -p save_dir:=/rov_captures
+    restart: unless-stopped

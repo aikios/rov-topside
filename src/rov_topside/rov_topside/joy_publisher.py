@@ -47,13 +47,19 @@ DS4_BTN_MAP = {
 
 
 def find_ds4():
-    """Find the DS4 evdev device."""
+    """Find the DS4 evdev device (main controller, not touchpad/motion)."""
     for path in evdev.list_devices():
         dev = evdev.InputDevice(path)
         if 'wireless controller' in dev.name.lower() or 'dualshock' in dev.name.lower():
-            # Make sure it has axes (not the touchpad or motion sensor device)
             caps = dev.capabilities(verbose=False)
-            if ecodes.EV_ABS in caps and ecodes.ABS_X in [c[0] for c in caps[ecodes.EV_ABS]]:
+            # Must have buttons (EV_KEY) AND axes (EV_ABS) — excludes motion sensors
+            if ecodes.EV_ABS not in caps or ecodes.EV_KEY not in caps:
+                continue
+            key_codes = [c for c in caps[ecodes.EV_KEY]]
+            abs_codes = [c[0] for c in caps[ecodes.EV_ABS]]
+            # Must have gamepad buttons (BTN_SOUTH) AND both sticks (ABS_X + ABS_RX)
+            if (ecodes.BTN_SOUTH in key_codes and
+                    ecodes.ABS_X in abs_codes and ecodes.ABS_RX in abs_codes):
                 return dev
     return None
 

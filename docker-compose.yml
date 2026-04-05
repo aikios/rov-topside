@@ -13,8 +13,10 @@ services:
     network_mode: host
     environment:
       - DISPLAY=${DISPLAY:-:0}
+      - XAUTHORITY=/tmp/.docker_xauth
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
+      - ${HOME}/.Xauthority:/tmp/.docker_xauth:ro
     command: ros2 run rov_topside dashboard
     restart: unless-stopped
 

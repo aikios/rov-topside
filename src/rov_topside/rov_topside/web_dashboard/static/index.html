@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ROV Control</title>
+<style>
+:root {
+  --glass-bg: rgba(255,255,255,0.12);
+  --glass-border: rgba(255,255,255,0.18);
+  --text: #e8e8ed;
+  --text-dim: #8e8e93;
+  --green: #30d158;
+  --red: #ff453a;
+  --orange: #ff9f0a;
+  --accent: #0a84ff;
+  --bg: #1c1c1e;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro', 'Helvetica Neue', sans-serif;
+  background: var(--bg); color: var(--text);
+  overflow: hidden; height: 100vh;
+}
+.panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border); border-radius: 12px;
+  padding: 10px; box-shadow: 0 4px 16px rgba(0,0,0,0.3);
+}
+.panel h3 {
+  font-size: 10px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--text-dim); margin-bottom: 6px;
+}
+.section-label {
+  font-size: 9px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: var(--text-dim); margin: 8px 0 4px;
+  padding-top: 6px; border-top: 1px solid rgba(255,255,255,0.08);
+}
+#app {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  grid-template-rows: auto 1fr;
+  gap: 8px; padding: 8px; height: 100vh;
+}
+/* Status bar */
+#status-bar {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 20px;
+  padding: 6px 14px; font-size: 12px; font-weight: 500;
+}
+#heartbeat { font-size: 18px; transition: color 0.15s; }
+.si { display:flex; gap:4px; align-items:center; }
+.sl { color: var(--text-dim); font-size: 11px; }
+.sv { font-variant-numeric: tabular-nums; font-size: 12px; }
+.good { color: var(--green); }
+.bad { color: var(--red); }
+
+/* Compact bars */
+.bar-row { display:flex; align-items:center; gap:4px; margin:2px 0; }
+.bar-label { font-size:10px; color:var(--text-dim); width:45px; text-align:right; }
+.bar-track { flex:1; height:10px; background:rgba(255,255,255,0.06); border-radius:5px; position:relative; overflow:hidden; }
+.bar-fill { position:absolute; top:1px; bottom:1px; border-radius:4px; transition:width 0.06s, left 0.06s; }
+.bar-val { font-size:9px; width:32px; font-variant-numeric:tabular-nums; text-align:right; color:var(--text-dim); }
+
+/* Motor items */
+.motor-grid { display:grid; grid-template-columns:1fr 1fr; gap:3px; }
+.motor-item { display:flex; align-items:center; gap:3px; font-size:10px; }
+.motor-dot { width:6px; height:6px; border-radius:50%; background:#555; flex-shrink:0; }
+.motor-num { color:var(--text-dim); width:18px; font-size:9px; }
+.motor-track { flex:1; height:8px; background:rgba(255,255,255,0.06); border-radius:4px; position:relative; overflow:hidden; }
+.motor-fill { position:absolute; top:1px; bottom:1px; border-radius:3px; transition:width 0.06s, left 0.06s; }
+.motor-val { font-size:9px; width:30px; font-variant-numeric:tabular-nums; text-align:right; color:var(--text-dim); }
+
+/* Depth hold */
+.dh-row { display:flex; align-items:center; gap:8px; margin:2px 0; }
+.dh-mode { font-size:12px; font-weight:600; }
+.dh-detail { font-size:10px; color:var(--text-dim); font-variant-numeric:tabular-nums; }
+.btn {
+  font-size:10px; font-weight:500; padding:3px 10px;
+  border:1px solid var(--glass-border); border-radius:6px;
+  background:var(--glass-bg); color:var(--text); cursor:pointer;
+}
+.btn:hover { background:rgba(255,255,255,0.2); }
+
+/* Camera */
+#camera-panel { position:relative; min-height:0; overflow:hidden; }
+#cam-img { width:100%; height:100%; object-fit:contain; border-radius:8px; display:block; background:#000; }
+#cam-status { position:absolute; top:24px; right:12px; font-size:10px; font-weight:600;
+  padding:2px 8px; border-radius:4px; background:rgba(0,0,0,0.6); }
+
+#disconnected {
+  position:fixed; inset:0; background:rgba(0,0,0,0.8);
+  display:flex; align-items:center; justify-content:center;
+  font-size:18px; color:var(--red); z-index:100;
+}
+#disconnected.hidden { display:none; }
+</style>
+</head>
+<body>
+<div id="disconnected" class="hidden">Connecting to ROV...</div>
+<div id="app">
+  <!-- Status Bar -->
+  <div id="status-bar" class="panel">
+    <span id="heartbeat">&#9829;</span>
+    <div class="si"><span class="sl">FC</span><span id="s-fc" class="sv">--</span></div>
+    <div class="si"><span class="sl">Armed</span><span id="s-arm" class="sv">--</span></div>
+    <div class="si"><span class="sl">Mode</span><span id="s-mode" class="sv">--</span></div>
+    <div class="si"><span class="sl">Depth</span><span id="s-depth" class="sv">--</span></div>
+  </div>
+
+  <!-- Left: Controls (joystick + motors + depth hold) -->
+  <div class="panel" id="controls-panel" style="overflow-y:auto;">
+    <h3>Joystick</h3>
+    <div id="joy-bars"></div>
+
+    <div class="section-label">Motors <span id="servo-live" style="color:var(--green)"></span></div>
+    <div class="motor-grid" id="motor-grid"></div>
+
+    <div class="section-label">Depth Hold</div>
+    <div class="dh-row">
+      <span class="dh-mode" id="dh-mode">MANUAL</span>
+      <button class="btn" id="btn-autotune" onclick="triggerAutotune()">Auto-Tune</button>
+    </div>
+    <div class="dh-detail" id="dh-detail"></div>
+    <div class="dh-detail" id="dh-pid"></div>
+  </div>
+
+  <!-- Right: Camera -->
+  <div id="camera-panel" class="panel">
+    <h3>Camera Preview</h3>
+    <img id="cam-img" alt="">
+    <div id="cam-status">--</div>
+  </div>
+</div>
+
+<script>
+const JOY_NAMES = ['Lateral','Forward','L2','Yaw','Vertical','R2','DPad X','DPad Y'];
+const N_MOTORS = 8;
+function el(id) { return document.getElementById(id); }
+
+function makeBars(id, labels) {
+  const c = el(id);
+  labels.forEach((l, i) => {
+    c.insertAdjacentHTML('beforeend',
+      `<div class="bar-row"><div class="bar-label">${l}</div>` +
+      `<div class="bar-track"><div class="bar-fill" id="${id}-f${i}"></div></div>` +
+      `<div class="bar-val" id="${id}-v${i}">0</div></div>`);
+  });
+}
+function makeMotors() {
+  const g = el('motor-grid');
+  for (let i = 0; i < N_MOTORS; i++) {
+    g.insertAdjacentHTML('beforeend',
+      `<div class="motor-item"><div class="motor-dot" id="md${i}"></div>` +
+      `<div class="motor-num">M${i+1}</div>` +
+      `<div class="motor-track"><div class="motor-fill" id="mf${i}"></div></div>` +
+      `<div class="motor-val" id="mv${i}">--</div></div>`);
+  }
+}
+makeBars('joy-bars', JOY_NAMES);
+makeMotors();
+
+function setBar(id, i, v) {
+  const f = el(`${id}-f${i}`), lbl = el(`${id}-v${i}`);
+  if (!f) return;
+  if (v >= 0) {
+    f.style.left = '50%'; f.style.width = (v*50)+'%'; f.style.background = 'var(--green)';
+  } else {
+    f.style.left = (50+v*50)+'%'; f.style.width = (-v*50)+'%'; f.style.background = 'var(--red)';
+  }
+  lbl.textContent = v.toFixed(2);
+}
+
+function setMotor(i, pwm) {
+  const dot=el(`md${i}`), fill=el(`mf${i}`), val=el(`mv${i}`);
+  if (!dot) return;
+  if (!pwm || pwm===0) { dot.style.background='#555'; val.textContent='--'; fill.style.width='0'; return; }
+  const d = pwm-1500, n = d/400;
+  dot.style.background = d>5?'var(--green)':d<-5?'var(--red)':'#666';
+  val.textContent = pwm;
+  if (n>=0) {
+    fill.style.left='50%'; fill.style.width=(n*50)+'%'; fill.style.background='var(--green)';
+  } else {
+    fill.style.left=(50+n*50)+'%'; fill.style.width=(-n*50)+'%'; fill.style.background='var(--red)';
+  }
+}
+
+// Camera
+const camImg = el('cam-img');
+let camUrl = null;
+
+// Autotune
+function triggerAutotune() {
+  if (ws && ws.readyState === 1) ws.send(JSON.stringify({cmd:'autotune'}));
+}
+
+// WebSocket
+let ws, hbBlink = false;
+function connect() {
+  const host = location.hostname || 'localhost';
+  ws = new WebSocket(`ws://${host}:9090`);
+  ws.binaryType = 'arraybuffer';
+  el('disconnected').classList.remove('hidden');
+
+  ws.onopen = () => el('disconnected').classList.add('hidden');
+  ws.onmessage = (e) => {
+    if (e.data instanceof ArrayBuffer) {
+      if (camUrl) URL.revokeObjectURL(camUrl);
+      camUrl = URL.createObjectURL(new Blob([e.data], {type:'image/jpeg'}));
+      camImg.src = camUrl;
+      el('cam-status').textContent = 'LIVE';
+      el('cam-status').style.color = 'var(--green)';
+      return;
+    }
+    const d = JSON.parse(e.data);
+
+    // Status
+    const fc=el('s-fc'); fc.textContent=d.fc_connected?'Connected':'Disconnected';
+    fc.className='sv '+(d.fc_connected?'good':'bad');
+    const arm=el('s-arm'); arm.textContent=d.armed?'ARMED':'DISARMED';
+    arm.className='sv '+(d.armed?'bad':'good');
+    el('s-mode').textContent=d.mode||'--';
+    if (d.depth!=null) el('s-depth').textContent=d.depth.toFixed(2)+'m';
+
+    // Heartbeat
+    const hb=el('heartbeat');
+    if (d.fc_heartbeat) { hbBlink=!hbBlink; hb.style.color=hbBlink?'var(--red)':'var(--green)'; }
+    else hb.style.color='#555';
+
+    // Joystick
+    if (d.joy_axes) d.joy_axes.forEach((v,i)=>setBar('joy-bars',i,v));
+
+    // Motors
+    if (d.servo_channels) {
+      d.servo_channels.forEach((v,i)=>setMotor(i,v));
+      el('servo-live').textContent=d.servo_channels.some(v=>v>0)?'LIVE':'';
+    }
+
+    // Depth hold
+    const dhm=el('dh-mode');
+    if (d.depth_hold) { dhm.textContent='DEPTH HOLD'; dhm.style.color='var(--green)'; }
+    else { dhm.textContent='MANUAL'; dhm.style.color='var(--text-dim)'; }
+    const sp = d.depth_setpoint;
+    el('dh-detail').textContent = sp!=null ?
+      `Depth: ${d.depth.toFixed(2)}m  |  Setpoint: ${sp.toFixed(2)}m` :
+      `Depth: ${(d.depth||0).toFixed(2)}m`;
+    el('dh-pid').textContent = d.pid_status||'';
+  };
+  ws.onclose = () => { el('disconnected').classList.remove('hidden'); setTimeout(connect,2000); };
+  ws.onerror = () => ws.close();
+}
+connect();
+</script>
+</body>
+</html>

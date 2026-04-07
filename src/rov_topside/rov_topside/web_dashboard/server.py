@@ -52,6 +52,7 @@ class WebDashboardNode(Node):
         self.create_subscription(String, '/rov/pid_status', self.pid_cb, 10)
         self.create_subscription(Bool, '/rov/fc_heartbeat', self.hb_cb, 10)
         self.create_subscription(CompressedImage, '/photogrammetry/preview', self.preview_cb, 1)
+        self.create_subscription(CompressedImage, '/photogrammetry/image', self.capture_cb, 10)
 
         # State dict pushed to all WS clients
         self.state = {
@@ -61,6 +62,7 @@ class WebDashboardNode(Node):
             'depth_setpoint': None, 'pid_status': 'MANUAL',
             'joy_axes': [0.0] * 8, 'cmd_channels': [1500] * 8,
             'servo_channels': [0] * 8,
+            'capture_count': 0, 'capture_flash': False,
         }
         self.state_lock = threading.Lock()
         self.preview_jpeg = None
@@ -123,9 +125,18 @@ class WebDashboardNode(Node):
         with self.preview_lock:
             self.preview_jpeg = bytes(msg.data)
 
+    def capture_cb(self, msg):
+        with self.state_lock:
+            self.state['capture_count'] += 1
+            self.state['capture_flash'] = True
+
     def get_state_json(self):
         with self.state_lock:
-            return json.dumps(self.state)
+            data = json.dumps(self.state)
+            # Reset flash after sending
+            if self.state['capture_flash']:
+                self.state['capture_flash'] = False
+            return data
 
     def get_preview(self):
         with self.preview_lock:

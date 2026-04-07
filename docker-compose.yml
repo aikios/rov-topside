@@ -4,26 +4,21 @@ services:
     network_mode: host
     privileged: true  # for /dev/input access
     volumes:
-      - /dev/input:/dev/input
+      - /dev/input:/dev/input:ro
     command: ros2 run rov_topside joy_publisher
     restart: unless-stopped
 
-  dashboard:
+  web_dashboard:
     build: .
     network_mode: host
-    environment:
-      - DISPLAY=${DISPLAY:-:0}
-      - XAUTHORITY=/tmp/.docker_xauth
-    volumes:
-      - /tmp/.X11-unix:/tmp/.X11-unix
-      - ${HOME}/.Xauthority:/tmp/.docker_xauth:ro
-    command: ros2 run rov_topside dashboard
+    command: ros2 run rov_topside web_dashboard
     restart: unless-stopped
+    # Dashboard served on http://localhost:8080, WebSocket on ws://localhost:9090
 
   photogrammetry_saver:
     build: .
     network_mode: host
     volumes:
-      - ~/rov_captures:/rov_captures
+      - ./captures:/rov_captures
     command: ros2 run rov_topside photogrammetry_saver --ros-args -p save_dir:=/rov_captures
     restart: unless-stopped

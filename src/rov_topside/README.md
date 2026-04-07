@@ -1,77 +1,73 @@
 # ROV Topside
 
-Pilot station for the underwater ROV. Runs on the topside computer (Ubuntu 24.04, ROS2 Jazzy).
+Pilot station for the underwater ROV. Runs on any machine with Docker and a DualShock 4 controller.
 
-## Nodes
-
-| Node | Description |
-|------|-------------|
-| `joy_publisher` | Custom evdev-based DS4 joystick reader. Publishes `sensor_msgs/Joy` at 20Hz with axes (8) and buttons (13). Replaces `ros2 joy` which has reliability issues with DS4. |
-| `dashboard` | Tkinter GUI showing joystick axes, commanded motor values, FC servo output, FC state (armed/mode), battery, depth, depth hold status, and blinking heartbeat indicator. |
-| `photogrammetry_saver` | Subscribes to `/photogrammetry/image`, saves full-res JPEGs to `~/rov_captures/`. |
-
-## Prerequisites
+## Quick Start (Docker)
 
 ```bash
-sudo apt install ros-jazzy-desktop ros-jazzy-rmw-cyclonedds-cpp \
-    ros-jazzy-image-transport ros-jazzy-compressed-image-transport \
-    ros-jazzy-image-transport-plugins ros-jazzy-rqt-image-view \
-    ros-jazzy-mavros ros-jazzy-mavros-msgs
-sudo pip3 install --break-system-packages evdev
-sudo usermod -aG input $USER  # for joystick access
+git clone git@github.com:aikios/rov-topside.git && cd rov-topside
+
+# Edit cyclonedds_topside.xml — set peer IPs for your network:
+#   - Your machine's IP (topside)
+#   - Pi 5's IP (onboard)
+
+docker compose up -d
+
+# Open http://localhost:8080 in your browser
+# Captures saved to ./captures/
 ```
 
-## Build
+## Services
+
+| Container | Description |
+|-----------|-------------|
+| `joy_publisher` | Reads DS4 controller via evdev, publishes `/joy` at 20Hz |
+| `web_dashboard` | Serves Aqua-themed web UI on :8080, WebSocket telemetry on :9090 |
+| `photogrammetry_saver` | Saves full-res captures to `./captures/` |
+
+## Web Dashboard
+
+Open **http://localhost:8080** from any browser on the network.
+
+Features:
+- Live camera preview from Pi Zero (~2fps)
+- Joystick axis visualization
+- Motor output with per-channel bars
+- Depth hold status + PID info
+- FC heartbeat, armed state, depth
+- Capture flash indicator + count
+- Camera rotation button
+
+## DS4 Controller Mapping
+
+| Input | Function |
+|-------|----------|
+| Left stick Y/X | Surge / Sway |
+| Right stick Y/X | Heave / Yaw |
+| Square | Toggle depth hold |
+| L1 / R1 | Depth setpoint shallower / deeper |
+| Circle | Photogrammetry capture |
+| Options | Arm / Disarm |
+
+## Native Development
 
 ```bash
-cd ~/rov_topside_ws
+# Don't use Docker for small changes — run natively:
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-select rov_topside --symlink-install
+source ~/rov_topside_ws/install/setup.bash
+export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+export CYCLONEDDS_URI=file://${HOME}/cyclonedds_topside.xml
+
+ros2 run rov_topside joy_publisher &
+ros2 run rov_topside web_dashboard &
 ```
 
 ## DDS Configuration
 
-Cyclone DDS with unicast peers (no multicast, Docker-compatible). Config at `~/cyclonedds_topside.xml`.
-
-```bash
-export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
-export CYCLONEDDS_URI=file://${HOME}/cyclonedds_topside.xml
-```
-
-## Running
-
-### Recommended: use the full launcher script
-```bash
-bash /tmp/launch_rov.sh
-```
-
-### Manual:
-```bash
-# Terminal 1: Joystick
-ros2 run rov_topside joy_publisher
-
-# Terminal 2: Dashboard
-ros2 run rov_topside dashboard
-
-# Terminal 3: Photogrammetry saver
-ros2 run rov_topside photogrammetry_saver
-```
-
-## DS4 Controller Mapping
-
-| Input | ROV Function |
-|-------|-------------|
-| Left stick Y | Surge (forward/reverse) |
-| Left stick X | Sway (lateral) |
-| Right stick Y | Heave (rise/sink) |
-| Right stick X | Yaw (rotate) |
-| D-pad left | Toggle depth hold |
-| D-pad up/down | Depth hold setpoint ±0.25m |
-| Options | Arm / Disarm |
-| Triangle | Photogrammetry capture |
-
-## Diagnostics
-
-```bash
-bash /tmp/rov_diag.sh
+Cyclone DDS with unicast peers (no multicast). Edit `cyclonedds_topside.xml`:
+```xml
+<Peers>
+  <Peer address="ONBOARD_PI5_IP"/>
+  <Peer address="THIS_MACHINE_IP"/>
+</Peers>
 ```

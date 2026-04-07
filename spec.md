@@ -94,25 +94,45 @@ joy_to_mavlink ──MANUAL_CONTROL──► /dev/ttyACM0 (FC serial, pymavlink)
 - D-pad up/down adjusts ±0.25m per press
 - Output maps to MANUAL_CONTROL `z` axis
 
-## Quick Start
+## Deployment (Docker)
 
+### Topside (any machine with Docker + DS4 controller)
 ```bash
-# Full system launch (kills stale processes, starts everything in order)
-bash /tmp/launch_rov.sh
+git clone git@github.com:aikios/rov-topside.git && cd rov-topside
 
-# Diagnostics (checks data flow at each step)
-bash /tmp/rov_diag.sh
+# Edit cyclonedds_topside.xml — set peer IPs for your network
+# Then:
+docker compose up -d
+
+# Dashboard at http://localhost:8080
+# Captures saved to ./captures/
+```
+
+### Onboard (Pi 5)
+```bash
+git clone git@github.com:aikios/rov-onboard.git && cd rov-onboard
+
+# Edit cyclonedds_onboard.xml — set peer IPs for your network
+# Then:
+docker compose up -d
+```
+
+### Native Development
+```bash
+# For development, run natively (faster iteration, no Docker rebuild):
+bash /tmp/launch_rov.sh        # launch all nodes
+bash /tmp/rov_diag.sh          # check data flow diagnostics
 ```
 
 ## Repositories
-- **[aikios/rov-topside](https://github.com/aikios/rov-topside)**
-- **[aikios/rov-onboard](https://github.com/aikios/rov-onboard)**
+- **[aikios/rov-topside](https://github.com/aikios/rov-topside)** — Topside: joystick, web dashboard, photogrammetry saver
+- **[aikios/rov-onboard](https://github.com/aikios/rov-onboard)** — Onboard: FC control, MAVROS, camera preview
 
 ## Known Issues
-- MAVROS 2.14.0 cannot forward ManualControl to FC — using direct serial
-- ArduSub 4.5.7 VECTORED_6DOF mixer broken for forward/lateral — MANUAL_CONTROL works directly
-- DDS zombie participants require full cleanup between restarts
-- Standard `ros2 joy` node unreliable with DS4 — custom evdev publisher required
+- MAVROS 2.14.0 cannot forward ManualControl to FC — joy_to_mavlink uses direct serial
+- DDS zombie participants accumulate if processes aren't cleaned up — always clear /dev/shm/cyclonedds_*
+- DS4 D-pad not detected via evdev — depth hold uses Square/L1/R1 buttons
+- Custom evdev joy_publisher required (ros2 joy unreliable with DS4)
 
 ## Status
 - [x] ROS2 Jazzy on topside + Pi 5
@@ -123,10 +143,10 @@ bash /tmp/rov_diag.sh
 - [x] MANUAL_CONTROL driving motor outputs via direct serial
 - [x] Arm/disarm via Options button
 - [x] Depth sensor (Bar30) + depth hold PID
-- [x] Dashboard with heartbeat, joystick, commands, servo output
+- [x] Web dashboard (Aqua UI, WebSocket, camera preview, capture indicator)
 - [x] Deadzone + noise filtering
 - [x] USB power cycle (software, no unplug)
-- [x] Launch + diagnostics scripts
+- [x] Docker deployment (topside host-agnostic, dashboard via browser)
+- [x] SD card backups (Pi Zero + Pi 5)
 - [ ] Pilot USB cameras
 - [ ] PID auto-tuner
-- [ ] Docker containerization

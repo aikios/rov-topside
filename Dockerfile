@@ -18,9 +18,9 @@ RUN pip3 install --break-system-packages evdev websockets
 WORKDIR /ros_ws
 COPY src/ src/
 
-# Build
+# Build all topside packages (rov_joystick, rov_dashboard, rov_photogrammetry)
 RUN . /opt/ros/jazzy/setup.sh && \
-    colcon build --packages-select rov_topside --symlink-install
+    colcon build --symlink-install
 
 # DDS config — uses env var CYCLONEDDS_URI at runtime for flexibility
 COPY cyclonedds_topside.xml /ros_ws/cyclonedds.xml

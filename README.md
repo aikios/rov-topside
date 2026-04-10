@@ -31,13 +31,13 @@ nano cyclonedds_topside.xml
 ./stop.sh
 ```
 
-## What It Does
+## ROS2 Packages
 
-| Container | Purpose |
-|-----------|---------|
-| `joy_publisher` | Reads DS4 controller via evdev, publishes `/joy` at 20Hz |
-| `web_dashboard` | Web UI on :8080, WebSocket telemetry on :9090 |
-| `photogrammetry_saver` | Saves full-res captures to `./captures/` |
+| Package | Container | Purpose |
+|---------|-----------|---------|
+| `rov_joystick` | `joy_publisher` | Reads DS4 via evdev, publishes `/joy` at 20Hz |
+| `rov_dashboard` | `web_dashboard` | HTTP :8080 + WebSocket :9090 + camera preview |
+| `rov_photogrammetry` | `photogrammetry_saver` | Saves full-res captures to `./captures/` |
 
 ## Dashboard
 
@@ -71,14 +71,15 @@ sudo pip3 install --break-system-packages evdev websockets
 
 cd ~/rov_topside_ws
 source /opt/ros/jazzy/setup.bash
-colcon build --packages-select rov_topside --symlink-install
+colcon build --symlink-install
 source install/setup.bash
 
 export RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 export CYCLONEDDS_URI=file://$HOME/cyclonedds_topside.xml
 
-ros2 run rov_topside joy_publisher &
-ros2 run rov_topside web_dashboard &
+ros2 run rov_joystick joy_publisher &
+ros2 run rov_dashboard server &
+ros2 run rov_photogrammetry saver &
 # http://localhost:8080
 ```
 

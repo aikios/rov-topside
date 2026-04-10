@@ -5,13 +5,13 @@ services:
     privileged: true  # for /dev/input access
     volumes:
       - /dev/input:/dev/input:ro
-    command: ros2 run rov_topside joy_publisher
+    command: ros2 run rov_joystick joy_publisher
     restart: unless-stopped
 
   web_dashboard:
     build: .
     network_mode: host
-    command: ros2 run rov_topside web_dashboard
+    command: ros2 run rov_dashboard server
     restart: unless-stopped
     # Dashboard served on http://localhost:8080, WebSocket on ws://localhost:9090
 
@@ -20,5 +20,5 @@ services:
     network_mode: host
     volumes:
       - ./captures:/rov_captures
-    command: ros2 run rov_topside photogrammetry_saver --ros-args -p save_dir:=/rov_captures
+    command: ros2 run rov_photogrammetry saver --ros-args -p save_dir:=/rov_captures
     restart: unless-stopped
